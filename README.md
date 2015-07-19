@@ -1,2 +1,2 @@
-# Brainfuck-in-Haskell
-Brainfuck REPL in Haskell
+# Brainfuck
+A really naive Brainfuck REPL in Haskell

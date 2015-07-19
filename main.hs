@@ -1,6 +1,7 @@
 import Data.Char
 import Data.Maybe 
 import Control.Monad
+import Data.Word (Word8)
 
 data Zip a = Zip [a] a [a] deriving (Show)
 
@@ -16,7 +17,7 @@ data BFInst = Inc
             | Debug 
             deriving (Show)
 
-type Data   = Zip Int
+type Data   = Zip Word8
 type Source = Zip BFInst
 
 emptyData :: Data
@@ -95,19 +96,21 @@ run' d Nothing
   = return d
 
 run' d@(Zip _ p _) s@(Just (Zip _ cmd _)) = case (cmd, p) of
-  (Inc       , _) -> run' (mapPtr (+1) d) (s >>= moveRight)
-  (Dec       , _) -> run' (mapPtr (+(-1)) d) (s >>= moveRight)
-  (Print     , _) -> putChar (chr $ getPtr d) >> run' d (s >>= moveRight)
-  (PointLeft , _) -> run' (fromJust $ Just d >>= moveLeft) (s >>= moveRight)
-  (PointRight, _) -> run' (fromJust $ Just d >>= moveRight) (s >>= moveRight)
-  (Debug     , _) -> print (getPtr d) >> run' d (s >>= moveRight)
+  (Inc       , _) -> run' (mapPtr (+1) d) next
+  (Dec       , _) -> run' (mapPtr (+(-1)) d) next
+  (Print     , _) -> putChar (chr $ fromIntegral $ getPtr d) >> run' d next
+  (PointLeft , _) -> run' (fromJust $ Just d >>= moveLeft) next
+  (PointRight, _) -> run' (fromJust $ Just d >>= moveRight) next
+  (Debug     , _) -> print (getPtr d) >> run' d next
   (LoopOpen  , 0) -> run' d (s >>= matchingLoopClose)
-  (LoopClose , 0) -> run' d (s >>= moveRight)
+  (LoopClose , 0) -> run' d next
   (LoopClose , _) -> run' d (s >>= matchingLoopOpen)
   (Read      , _) -> do
                        inp <- getChar
-                       run' (putPtr d (ord inp)) (s >>= moveRight)
-  (_         , _) -> run' d (s >>= moveRight)
+                       run' (putPtr d (fromIntegral $ ord inp)) next
+  (_         , _) -> run' d next
+  where next = s >>= moveRight
+  
 
 main :: IO ()
 main = void $ repl emptyData ""
