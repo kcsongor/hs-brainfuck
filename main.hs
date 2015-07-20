@@ -1,29 +1,39 @@
-import Data.Char
-import Data.Maybe 
-import Control.Monad
+import Data.Char (ord, chr)
+import Control.Monad (void)
 import Data.Word (Word8)
+import Data.Maybe (mapMaybe)
 
 data Zip a = Zip [a] a [a] deriving (Show)
 
-data BFInst = Inc 
-            | Dec 
-            | PointLeft 
-            | PointRight 
-            | LoopOpen 
-            | LoopClose 
-            | Print 
-            | Read
-            | Comment Char
-            | Debug 
-            deriving (Show)
+data BFToken = Inc 
+             | Dec 
+             | PointLeft 
+             | PointRight 
+             | Block [BFToken]
+             | BlockOpen
+             | BlockClose
+             | Print 
+             | Read
+             | Comment Char
+             | Debug 
+             deriving (Show)
 
 type Data   = Zip Word8
-type Source = Zip BFInst
 
 emptyData :: Data
 emptyData = Zip (repeat 0) 0 (repeat 0)
 
-------------------------------------
+buildAST :: String -> [BFToken]
+buildAST = fst . buildAST' . mapMaybe parseChar
+
+buildAST' :: [BFToken] -> ([BFToken], [BFToken])
+buildAST' [] = ([], [])
+buildAST' (BlockOpen : xs) = (Block b : b', xs'')
+  where (b, xs') = buildAST' xs
+        (b', xs'') = buildAST' xs'
+buildAST' (BlockClose : xs) = ([], xs)
+buildAST' (x : xs) = (x : is, xs')
+  where (is, xs') = buildAST' xs
 
 mapPtr :: (a -> a) -> Zip a -> Zip a
 mapPtr f (Zip l x r)
@@ -35,89 +45,53 @@ getPtr (Zip _ p _) = p
 putPtr :: Zip a -> a -> Zip a
 putPtr (Zip l _ r) x = Zip l x r
 
-moveLeft :: Zip a -> Maybe (Zip a)
-moveLeft (Zip [] _ _)
-  = Nothing
+moveLeft :: Zip a -> Zip a
+moveLeft (Zip [] _ _) = undefined
 moveLeft (Zip (l : ls) p rs)
-  = Just $ Zip ls l (p : rs)
+  = Zip ls l (p : rs)
 
-moveRight :: Zip a -> Maybe (Zip a)
-moveRight (Zip _ _ [])
-  = Nothing
+moveRight :: Zip a -> Zip a
+moveRight (Zip _ _ []) = undefined
 moveRight (Zip ls p (r : rs))
-  = Just $ Zip (p : ls) r rs
+  = Zip (p : ls) r rs
 
-matchingLoopClose :: Source -> Maybe Source
-matchingLoopClose = matchingLoopClose' 0
+parseChar :: Char -> Maybe BFToken
+parseChar '+' = Just Inc
+parseChar '-' = Just Dec
+parseChar '<' = Just PointLeft
+parseChar '>' = Just PointRight
+parseChar '.' = Just Print
+parseChar ',' = Just Read
+parseChar '[' = Just BlockOpen
+parseChar ']' = Just BlockClose
+parseChar '#' = Just Debug
+parseChar _   = Nothing
 
-matchingLoopClose' :: Int -> Source -> Maybe Source
-matchingLoopClose' 1 s@(Zip _ LoopClose _)
-  = Just s
-matchingLoopClose' b s@(Zip _ LoopOpen _)
-  = moveRight s >>= matchingLoopClose' (b + 1)
-matchingLoopClose' b s@(Zip _ LoopClose _)
-  = moveRight s >>= matchingLoopClose' (b - 1)
-matchingLoopClose' b s
-  = moveRight s >>= matchingLoopClose' b
-
-matchingLoopOpen :: Source -> Maybe Source
-matchingLoopOpen = matchingLoopOpen' 0
-
-matchingLoopOpen' :: Int -> Source -> Maybe Source
-matchingLoopOpen' 1 s@(Zip _ LoopOpen _)
-  = Just s
-matchingLoopOpen' b s@(Zip _ LoopClose _)
-  = moveLeft s >>= matchingLoopOpen' (b + 1)
-matchingLoopOpen' b s@(Zip _ LoopOpen _)
-  = moveLeft s >>= matchingLoopOpen' (b - 1)
-matchingLoopOpen' b s
-  = moveLeft s >>= matchingLoopOpen' b
-------------------------------------
-parseChar :: Char -> BFInst
-parseChar '+' = Inc
-parseChar '-' = Dec
-parseChar '<' = PointLeft
-parseChar '>' = PointRight
-parseChar '[' = LoopOpen
-parseChar ']' = LoopClose
-parseChar '.' = Print
-parseChar ',' = Read
-parseChar '#' = Debug
-parseChar c   = Comment c
-
-parseString :: String -> Maybe Source
-parseString [] = Nothing
-parseString s  = Just $ Zip [] h t
-  where (h : t) = map parseChar s
-
-run' :: Data -> Maybe Source -> IO Data
-
-run' d Nothing 
-  = return d
-
-run' d@(Zip _ p _) s@(Just (Zip _ cmd _)) = case (cmd, p) of
-  (Inc       , _) -> run' (mapPtr (+1) d) next
-  (Dec       , _) -> run' (mapPtr (+(-1)) d) next
-  (Print     , _) -> putChar (chr $ fromIntegral $ getPtr d) >> run' d next
-  (PointLeft , _) -> run' (fromJust $ Just d >>= moveLeft) next
-  (PointRight, _) -> run' (fromJust $ Just d >>= moveRight) next
-  (Debug     , _) -> print (getPtr d) >> run' d next
-  (LoopOpen  , 0) -> run' d (s >>= matchingLoopClose)
-  (LoopClose , 0) -> run' d next
-  (LoopClose , _) -> run' d (s >>= matchingLoopOpen)
-  (Read      , _) -> do
-                       inp <- getChar
-                       run' (putPtr d (fromIntegral $ ord inp)) next
-  (_         , _) -> run' d next
-  where next = s >>= moveRight
-  
+run :: [BFToken] -> Data -> IO Data
+run [] d = return d
+run (Inc : is) d
+  = run is (mapPtr (+1) d)
+run (Dec : is) d
+  = run is (mapPtr (+(-1)) d)
+run (PointLeft : is) d
+  = run is (moveLeft d)
+run (PointRight : is) d
+  = run is (moveRight d)
+run (Print : is) d
+  = putChar (chr $ fromIntegral $ getPtr d) >> run is d
+run (Read : is) d 
+  = getChar >>= (\c -> run is (putPtr d (fromIntegral $ ord c)))
+run is@(Block b : is') d
+  | getPtr d == 0 = run is' d
+  | otherwise     = run b d >>= run is
+run (_ : is) d = run is d
 
 main :: IO ()
 main = void $ repl emptyData ""
 
 repl :: Data -> String -> IO Data
 repl d s = do
-            result <- run' d (parseString s)
+            result <- run (buildAST s) d
             putStrLn ""
             putStr ">> "
             input  <- getLine 
