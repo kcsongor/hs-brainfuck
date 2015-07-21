@@ -19,12 +19,13 @@ data BFToken = Inc
              deriving (Show)
 
 type Data   = Zip Word8
+newtype Runnable = Runnable [BFToken]
 
 emptyData :: Data
 emptyData = Zip (repeat 0) 0 (repeat 0)
 
-buildAST :: String -> [BFToken]
-buildAST = fst . buildAST' . mapMaybe parseChar
+buildAST :: String -> Runnable
+buildAST = Runnable . fst . buildAST' . mapMaybe parseChar
 
 buildAST' :: [BFToken] -> ([BFToken], [BFToken])
 buildAST' [] = ([], [])
@@ -67,32 +68,32 @@ parseChar ']' = Just BlockClose
 parseChar '#' = Just Debug
 parseChar _   = Nothing
 
-run :: [BFToken] -> Data -> IO Data
-run [] d = return d
-run (Inc : is) d
-  = run is (mapPtr (+1) d)
-run (Dec : is) d
-  = run is (mapPtr (+(-1)) d)
-run (PointLeft : is) d
-  = run is (moveLeft d)
-run (PointRight : is) d
-  = run is (moveRight d)
-run (Print : is) d
-  = putChar (chr $ fromIntegral $ getPtr d) >> run is d
-run (Read : is) d 
-  = getChar >>= (\c -> run is (putPtr d (fromIntegral $ ord c)))
-run is@(Block b : is') d
-  | getPtr d == 0 = run is' d
-  | otherwise     = run b d >>= run is
-run (_ : is) d = run is d
+run :: Runnable -> Data -> IO Data
+run (Runnable r) = run' r
+  where run' [] d = return d
+        run' (Inc : is) d
+          = run' is (mapPtr (+1) d)
+        run' (Dec : is) d
+          = run' is (mapPtr (+(-1)) d)
+        run' (PointLeft : is) d
+          = run' is (moveLeft d)
+        run' (PointRight : is) d
+          = run' is (moveRight d)
+        run' (Print : is) d
+          = putChar ((chr . fromIntegral . getPtr) d) >> run' is d
+        run' (Read : is) d 
+          = getChar >>= (\c -> run' is (putPtr d (fromIntegral $ ord c)))
+        run' is@(Block b : is') d
+          | getPtr d == 0 = run' is' d
+          | otherwise     = run' b d >>= run' is
+        run' (_ : is) d = run' is d
 
 main :: IO ()
 main = void $ repl emptyData ""
 
 repl :: Data -> String -> IO Data
-repl d s = do
-            result <- run (buildAST s) d
-            putStrLn ""
-            putStr ">> "
-            input  <- getLine 
-            repl result input
+repl d s = do result <- run (buildAST s) d
+              putStrLn ""
+              putStr ">> "
+              input  <- getLine 
+              repl result input
